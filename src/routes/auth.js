@@ -3,7 +3,6 @@ const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const Status = require('../models/Status');
-const { sendOTP, verifyOTP } = require('../services/otp');
 const { verifyFirebaseIdToken, isFirebaseInitialized } = require('../services/push');
 const { auth } = require('../middleware/auth');
 
@@ -142,96 +141,6 @@ router.post('/login', [
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// Send OTP
-router.post('/send-otp', [
-  body('phone').isMobilePhone()
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { phone } = req.body;
-
-    const result = await sendOTP(phone);
-    res.json(result);
-  } catch (error) {
-    console.error('Send OTP error:', error);
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
-});
-
-// Verify OTP and login/register
-router.post('/verify-otp', [
-  body('phone').isMobilePhone(),
-  body('otp').isLength({ min: 6, max: 6 }),
-  body('name').optional().trim().isLength({ min: 2 })
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { phone, otp, name } = req.body;
-
-    // Verify OTP
-    const otpResult = await verifyOTP(phone, otp);
-    if (!otpResult.valid) {
-      return res.status(400).json({ error: otpResult.message });
-    }
-
-    // Find or create user
-    let user = await User.findOne({ phone });
-    let isNewUser = false;
-
-    if (!user) {
-      // New user - require name
-      if (!name) {
-        return res.status(400).json({
-          error: 'Name required for new users',
-          isNewUser: true
-        });
-      }
-
-      const defaultStatus = await Status.findOne({ name: 'Available', isDefault: true });
-
-      user = await User.create({
-        phone,
-        name,
-        isVerified: true,
-        currentStatus: defaultStatus?._id
-      });
-      isNewUser = true;
-    }
-
-    // Update last active
-    user.lastActive = new Date();
-    await user.save();
-
-    const tokens = generateTokens(user._id);
-
-    res.json({
-      message: isNewUser ? 'Registration successful' : 'Login successful',
-      isNewUser,
-      user: {
-        id: user._id,
-        phone: user.phone,
-        email: user.email,
-        name: user.name,
-        gender: user.gender,
-        avatar: user.avatar,
-        isPremium: user.isPremium
-      },
-      ...tokens
-    });
-  } catch (error) {
-    console.error('Verify OTP error:', error);
-    res.status(500).json({ error: 'Verification failed' });
   }
 });
 
