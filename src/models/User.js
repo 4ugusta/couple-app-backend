@@ -101,8 +101,8 @@ const userSchema = new mongoose.Schema({
   firebaseUid: {
     type: String,
     unique: true,
-    sparse: true,
-    default: null
+    sparse: true
+    // No default - field will be undefined (not null) for sparse index to work
   },
   isVerified: {
     type: Boolean,
