@@ -16,7 +16,14 @@ router.get('/', auth, async (req, res) => {
         { userId: req.user._id, status: 'accepted' },
         { connectedUserId: req.user._id, status: 'accepted' }
       ]
-    }).populate('userId connectedUserId', 'name avatar phone email currentStatus lastActive');
+    }).populate({
+      path: 'userId connectedUserId',
+      select: 'name avatar phone email currentStatus lastActive',
+      populate: {
+        path: 'currentStatus',
+        select: 'name emoji'
+      }
+    });
 
     // Format connections
     const formattedConnections = connections.map(conn => {
@@ -26,6 +33,7 @@ router.get('/', auth, async (req, res) => {
       return {
         id: conn._id,
         type: conn.type,
+        status: conn.status,
         nickname: conn.nickname,
         user: {
           id: otherUser._id,
@@ -33,7 +41,12 @@ router.get('/', auth, async (req, res) => {
           avatar: otherUser.avatar,
           phone: otherUser.phone,
           email: otherUser.email,
-          lastActive: otherUser.lastActive
+          lastActive: otherUser.lastActive,
+          status: otherUser.currentStatus ? {
+            id: otherUser.currentStatus._id,
+            name: otherUser.currentStatus.name,
+            emoji: otherUser.currentStatus.emoji
+          } : null
         },
         createdAt: conn.createdAt
       };
