@@ -375,6 +375,13 @@ router.get('/user/:userId', auth, async (req, res) => {
     const nextPeriod = cycle.getPredictedNextPeriod();
     const fertileWindow = cycle.getFertileWindow();
 
+    // Get recent symptoms (last 7 days)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentSymptoms = cycle.symptoms
+      .filter(s => s.date >= sevenDaysAgo)
+      .sort((a, b) => b.date - a.date)
+      .slice(0, 10);
+
     // Get the user's name
     const targetUser = await User.findById(userId).select('name');
 
@@ -390,7 +397,9 @@ router.get('/user/:userId', auth, async (req, res) => {
         cycleLength: cycle.cycleLength,
         periodLength: cycle.periodLength,
         lastPeriodStart: cycle.lastPeriodStart,
-        isTracking: cycle.isTracking
+        isTracking: cycle.isTracking,
+        recentPeriods: cycle.periods.slice(-3).reverse(),
+        recentSymptoms
       }
     });
   } catch (error) {
