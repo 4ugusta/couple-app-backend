@@ -7,7 +7,7 @@ const router = express.Router();
 
 // Search users by phone number
 router.get('/search', auth, [
-  query('phone').optional().isMobilePhone(),
+  query('phone').optional(),
   query('email').optional().isEmail()
 ], async (req, res) => {
   try {
@@ -22,11 +22,23 @@ router.get('/search', auth, [
       return res.status(400).json({ error: 'Please provide phone or email to search' });
     }
 
-    const query = {};
-    if (phone) query.phone = phone;
-    if (email) query.email = email.toLowerCase();
+    const searchQuery = {};
+    if (phone) {
+      // Normalize phone number - remove spaces, dashes, and handle country code variations
+      const cleanPhone = phone.replace(/[\s\-\(\)]/g, '');
 
-    const user = await User.findOne(query).select('name avatar phone email');
+      if (cleanPhone.startsWith('+')) {
+        // Phone already has country code, search exact match
+        searchQuery.phone = cleanPhone;
+      } else {
+        // Phone without country code - search using regex to match ending digits
+        // This matches phones ending with the provided digits
+        searchQuery.phone = { $regex: cleanPhone + '$' };
+      }
+    }
+    if (email) searchQuery.email = email.toLowerCase();
+
+    const user = await User.findOne(searchQuery).select('name avatar phone email');
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
