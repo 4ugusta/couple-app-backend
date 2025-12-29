@@ -147,15 +147,16 @@ router.post('/login', [
 // Firebase Phone Authentication
 // Verifies Firebase ID token and creates/logs in user
 router.post('/firebase-phone', [
-  body('firebaseIdToken').exists(),
-  body('phone').isMobilePhone(),
+  body('firebaseIdToken').exists().withMessage('Firebase token is required'),
+  body('phone').matches(/^\+[1-9]\d{6,14}$/).withMessage('Invalid phone number format'),
   body('name').optional().trim().isLength({ min: 2 }),
   body('gender').optional().isIn(['male', 'female', 'other', 'prefer_not_to_say'])
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      // Return first error in the expected format
+      return res.status(400).json({ error: errors.array()[0].msg });
     }
 
     const { firebaseIdToken, phone, name, gender } = req.body;
