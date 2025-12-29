@@ -170,10 +170,108 @@ router.post('/period/end', auth, [
   }
 });
 
+// Log past period (manual entry)
+router.post('/period/log', auth, [
+  body('startDate').isISO8601(),
+  body('endDate').optional().isISO8601(),
+  body('flow').optional().isIn(['light', 'medium', 'heavy'])
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const startDate = new Date(req.body.startDate);
+    const endDate = req.body.endDate ? new Date(req.body.endDate) : null;
+    const flow = req.body.flow || 'medium';
+
+    // Validate dates
+    if (endDate && endDate < startDate) {
+      return res.status(400).json({ error: 'End date cannot be before start date' });
+    }
+
+    if (startDate > new Date()) {
+      return res.status(400).json({ error: 'Cannot log future periods' });
+    }
+
+    let cycle = await Cycle.findOne({ userId: req.user._id });
+
+    if (!cycle) {
+      cycle = await Cycle.create({
+        userId: req.user._id,
+        cycleLength: 28,
+        periodLength: 5,
+        isTracking: true
+      });
+    }
+
+    // Add the period
+    const newPeriod = {
+      startDate,
+      endDate,
+      flow
+    };
+
+    cycle.periods.push(newPeriod);
+
+    // Sort periods by start date
+    cycle.periods.sort((a, b) => a.startDate - b.startDate);
+
+    // Update lastPeriodStart if this is the most recent period
+    const mostRecentPeriod = cycle.periods[cycle.periods.length - 1];
+    if (mostRecentPeriod.startDate.getTime() === startDate.getTime()) {
+      cycle.lastPeriodStart = startDate;
+    }
+
+    // Update cycle length if we have multiple periods
+    if (cycle.periods.length >= 2) {
+      const recentPeriods = cycle.periods.slice(-3);
+      if (recentPeriods.length >= 2) {
+        let totalDays = 0;
+        let count = 0;
+        for (let i = 1; i < recentPeriods.length; i++) {
+          const daysBetween = Math.round(
+            (recentPeriods[i].startDate - recentPeriods[i - 1].startDate) / (1000 * 60 * 60 * 24)
+          );
+          if (daysBetween >= 21 && daysBetween <= 45) {
+            totalDays += daysBetween;
+            count++;
+          }
+        }
+        if (count > 0) {
+          cycle.cycleLength = Math.round(totalDays / count);
+        }
+      }
+    }
+
+    // Update period length if we have end date
+    if (endDate) {
+      const periodDays = Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+      if (periodDays >= 1 && periodDays <= 10) {
+        cycle.periodLength = Math.round((cycle.periodLength * 0.7) + (periodDays * 0.3));
+      }
+    }
+
+    await cycle.save();
+
+    // Notify users who can see cycle
+    await notifyCycleUpdate(req.user._id, cycle, 'period_logged');
+
+    res.json({
+      message: 'Period logged',
+      period: newPeriod
+    });
+  } catch (error) {
+    console.error('Log period error:', error);
+    res.status(500).json({ error: 'Failed to log period' });
+  }
+});
+
 // Log symptom
 router.post('/symptom', auth, [
   body('date').optional().isISO8601(),
-  body('type').isIn(['cramps', 'headache', 'mood_swings', 'bloating', 'fatigue', 'breast_tenderness', 'acne', 'back_pain', 'nausea', 'other']),
+  body('type').isIn(['cramps', 'headache', 'mood_swings', 'bloating', 'fatigue', 'breast_tenderness', 'acne', 'back_pain', 'nausea', 'cravings', 'anxiety', 'other']),
   body('severity').optional().isInt({ min: 1, max: 5 }),
   body('notes').optional().trim().isLength({ max: 200 })
 ], async (req, res) => {
@@ -425,6 +523,9 @@ async function notifyCycleUpdate(userId, cycle, type) {
     } else if (type === 'period_ended') {
       title = `${user.name}'s Cycle Update`;
       message = `${user.name}'s period has ended`;
+    } else if (type === 'period_logged') {
+      title = `${user.name}'s Cycle Update`;
+      message = `${user.name} logged a past period`;
     }
 
     for (const sharedUser of sharedUsers) {
