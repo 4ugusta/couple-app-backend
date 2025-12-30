@@ -251,6 +251,27 @@ router.post('/period/log', auth, [
       });
     }
 
+    // Check for overlapping periods
+    const newEndDate = endDate || new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000); // Default 7 days if no end
+    const overlappingPeriod = cycle.periods.find(existingPeriod => {
+      const existingStart = new Date(existingPeriod.startDate);
+      const existingEnd = existingPeriod.endDate
+        ? new Date(existingPeriod.endDate)
+        : new Date(existingStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      // Check if date ranges overlap
+      return startDate <= existingEnd && newEndDate >= existingStart;
+    });
+
+    if (overlappingPeriod) {
+      const existingStartStr = new Date(overlappingPeriod.startDate).toISOString().split('T')[0];
+      return res.status(400).json({
+        error: 'This period overlaps with an existing period',
+        overlapsWithStart: existingStartStr,
+        message: `You already have a period logged starting ${existingStartStr}. Delete it first or choose different dates.`
+      });
+    }
+
     // Add the period
     const newPeriod = {
       startDate,
@@ -263,10 +284,11 @@ router.post('/period/log', auth, [
     // Sort periods by start date
     cycle.periods.sort((a, b) => a.startDate - b.startDate);
 
-    // Update lastPeriodStart if this is the most recent period
+    // Update lastPeriodStart and lastPeriodEnd if this is the most recent period
     const mostRecentPeriod = cycle.periods[cycle.periods.length - 1];
     if (mostRecentPeriod.startDate.getTime() === startDate.getTime()) {
       cycle.lastPeriodStart = startDate;
+      cycle.lastPeriodEnd = endDate; // Also set end date (can be null if ongoing)
     }
 
     // Update cycle length if we have multiple periods
@@ -313,6 +335,101 @@ router.post('/period/log', auth, [
   } catch (error) {
     console.error('Log period error:', error);
     res.status(500).json({ error: 'Failed to log period' });
+  }
+});
+
+// Delete a specific period
+router.delete('/period/:periodId', auth, async (req, res) => {
+  try {
+    const { periodId } = req.params;
+
+    const cycle = await Cycle.findOne({ userId: req.user._id });
+
+    if (!cycle) {
+      return res.status(404).json({ error: 'Cycle data not found' });
+    }
+
+    const periodIndex = cycle.periods.findIndex(p => p._id.toString() === periodId);
+
+    if (periodIndex === -1) {
+      return res.status(404).json({ error: 'Period not found' });
+    }
+
+    // Remove the period
+    cycle.periods.splice(periodIndex, 1);
+
+    // Recalculate lastPeriodStart and lastPeriodEnd from remaining periods
+    if (cycle.periods.length > 0) {
+      // Sort and get most recent completed period
+      cycle.periods.sort((a, b) => a.startDate - b.startDate);
+      const completedPeriods = cycle.periods.filter(p => p.endDate);
+
+      if (completedPeriods.length > 0) {
+        const mostRecent = completedPeriods[completedPeriods.length - 1];
+        cycle.lastPeriodStart = mostRecent.startDate;
+        cycle.lastPeriodEnd = mostRecent.endDate;
+      } else {
+        // No completed periods, use most recent start
+        const mostRecent = cycle.periods[cycle.periods.length - 1];
+        cycle.lastPeriodStart = mostRecent.startDate;
+        cycle.lastPeriodEnd = null;
+      }
+    } else {
+      cycle.lastPeriodStart = null;
+      cycle.lastPeriodEnd = null;
+    }
+
+    await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
+    res.json({
+      message: 'Period deleted',
+      remainingPeriods: cycle.periods.length
+    });
+  } catch (error) {
+    console.error('Delete period error:', error);
+    res.status(500).json({ error: 'Failed to delete period' });
+  }
+});
+
+// Clear all periods (reset cycle data)
+router.delete('/periods', auth, async (req, res) => {
+  try {
+    const cycle = await Cycle.findOne({ userId: req.user._id });
+
+    if (!cycle) {
+      return res.status(404).json({ error: 'Cycle data not found' });
+    }
+
+    const deletedCount = cycle.periods.length;
+
+    // Clear all periods and reset related fields
+    cycle.periods = [];
+    cycle.lastPeriodStart = null;
+    cycle.lastPeriodEnd = null;
+    cycle.expectedNextPeriod = {
+      startDate: null,
+      endDate: null,
+      isManuallySet: false
+    };
+    // Reset to defaults
+    cycle.cycleLength = 28;
+    cycle.periodLength = 5;
+
+    await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
+    res.json({
+      message: 'All periods cleared',
+      deletedCount
+    });
+  } catch (error) {
+    console.error('Clear periods error:', error);
+    res.status(500).json({ error: 'Failed to clear periods' });
   }
 });
 
