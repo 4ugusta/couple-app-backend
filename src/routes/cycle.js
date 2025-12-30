@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { body, validationResult } = require('express-validator');
 const Cycle = require('../models/Cycle');
 const User = require('../models/User');
@@ -726,11 +727,14 @@ router.get('/user/:userId', auth, async (req, res) => {
   try {
     const { userId } = req.params;
 
+    // Convert string userId to ObjectId for proper query matching
+    const targetUserId = new mongoose.Types.ObjectId(userId);
+
     // Check if connected
     const connection = await Connection.findOne({
       $or: [
-        { userId: req.user._id, connectedUserId: userId, status: 'accepted' },
-        { userId: userId, connectedUserId: req.user._id, status: 'accepted' }
+        { userId: req.user._id, connectedUserId: targetUserId, status: 'accepted' },
+        { userId: targetUserId, connectedUserId: req.user._id, status: 'accepted' }
       ]
     });
 
@@ -740,7 +744,7 @@ router.get('/user/:userId', auth, async (req, res) => {
 
     // Check if user is sharing cycle with requester
     const cycle = await Cycle.findOne({
-      userId,
+      userId: targetUserId,
       shareWith: req.user._id
     });
 
@@ -752,8 +756,13 @@ router.get('/user/:userId', auth, async (req, res) => {
     }
 
     const currentPhase = cycle.getCurrentPhase();
-    const nextPeriod = cycle.getPredictedNextPeriod();
+    const lastPeriod = cycle.getLastPeriod();
+    const nextPeriod = cycle.getNextPeriod();
     const fertileWindow = cycle.getFertileWindow();
+
+    // Check if there's an ongoing period
+    const latestPeriod = cycle.periods[cycle.periods.length - 1];
+    const hasOngoingPeriod = latestPeriod && !latestPeriod.endDate;
 
     // Get recent symptoms (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -763,22 +772,30 @@ router.get('/user/:userId', auth, async (req, res) => {
       .slice(0, 10);
 
     // Get the user's name
-    const targetUser = await User.findById(userId).select('name');
+    const targetUser = await User.findById(targetUserId).select('name');
 
+    // Return in same format as main cycle endpoint for consistency
     res.json({
       user: {
-        id: userId,
+        id: targetUserId,
         name: targetUser.name
       },
       cycle: {
-        currentPhase,
-        nextPeriod,
-        fertileWindow,
+        id: cycle._id,
         cycleLength: cycle.cycleLength,
         periodLength: cycle.periodLength,
-        lastPeriodStart: cycle.lastPeriodStart,
         isTracking: cycle.isTracking,
-        recentPeriods: cycle.periods.slice(-3).reverse(),
+        currentPhase,
+        lastPeriod,
+        nextPeriod,
+        hasOngoingPeriod,
+        ongoingPeriod: hasOngoingPeriod ? {
+          startDate: latestPeriod.startDate,
+          flow: latestPeriod.flow,
+          dayCount: Math.ceil((new Date() - latestPeriod.startDate) / (1000 * 60 * 60 * 24)) + 1
+        } : null,
+        fertileWindow,
+        recentPeriods: cycle.periods.slice(-6).reverse(),
         recentSymptoms
       }
     });

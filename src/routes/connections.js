@@ -20,7 +20,7 @@ router.get('/', auth, cacheConnections, async (req, res) => {
       ]
     }).populate({
       path: 'userId connectedUserId',
-      select: 'name avatar phone email currentStatus lastActive',
+      select: 'name avatar phone email gender currentStatus lastActive',
       populate: {
         path: 'currentStatus',
         select: 'name emoji'
@@ -43,6 +43,7 @@ router.get('/', auth, cacheConnections, async (req, res) => {
           avatar: otherUser.avatar,
           phone: otherUser.phone,
           email: otherUser.email,
+          gender: otherUser.gender,
           lastActive: otherUser.lastActive,
           status: otherUser.currentStatus ? {
             id: otherUser.currentStatus._id,
