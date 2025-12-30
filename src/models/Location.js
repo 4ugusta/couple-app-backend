@@ -52,20 +52,27 @@ locationSchema.index({ userId: 1, isVisit: 1 });
 
 // Static method to get user's latest location
 locationSchema.statics.getLatestLocation = async function(userId) {
-  return await this.findOne({ userId }).sort({ timestamp: -1 });
+  // Ensure userId is properly converted for query
+  const mongoose = require('mongoose');
+  const userObjectId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
+  return await this.findOne({ userId: userObjectId }).sort({ timestamp: -1 });
 };
 
 // Static method to get user's visit history
 locationSchema.statics.getVisitHistory = async function(userId, limit = 20) {
-  return await this.find({ userId, isVisit: true })
+  const mongoose = require('mongoose');
+  const userObjectId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
+  return await this.find({ userId: userObjectId, isVisit: true })
     .sort({ timestamp: -1 })
     .limit(limit);
 };
 
 // Static method to get locations within time range
 locationSchema.statics.getLocationHistory = async function(userId, startTime, endTime) {
+  const mongoose = require('mongoose');
+  const userObjectId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
   return await this.find({
-    userId,
+    userId: userObjectId,
     timestamp: { $gte: startTime, $lte: endTime }
   }).sort({ timestamp: 1 });
 };
