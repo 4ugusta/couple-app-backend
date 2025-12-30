@@ -6,11 +6,13 @@ const Connection = require('../models/Connection');
 const { auth } = require('../middleware/auth');
 const { checkFreeSlots, checkPremiumSlots } = require('../middleware/premium');
 const { sendToUsers } = require('../config/socket');
+const { cacheStatuses } = require('../middleware/cache');
+const { CacheService } = require('../services/cache');
 
 const router = express.Router();
 
 // Get all available statuses (default + custom)
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, cacheStatuses, async (req, res) => {
   try {
     // Get default statuses
     const defaultStatuses = await Status.getDefaultStatuses();
@@ -102,6 +104,9 @@ router.put('/current', auth, [
       currentCustomStatus: null
     });
 
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
+
     // Notify connected users
     await notifyStatusChange(req.user._id, {
       id: status._id,
@@ -156,6 +161,9 @@ router.put('/current/custom', auth, [
     user.currentCustomStatus = customStatusId;
     await user.save();
 
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
+
     // Notify connected users
     await notifyStatusChange(req.user._id, {
       id: customStatus._id,
@@ -207,6 +215,9 @@ router.post('/custom', auth, checkFreeSlots('status'), [
 
     await user.save();
 
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
+
     const newStatus = user.customStatuses[user.customStatuses.length - 1];
 
     res.status(201).json({
@@ -253,6 +264,9 @@ router.post('/custom/premium', auth, checkPremiumSlots('status'), [
 
     await user.save();
 
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
+
     const newStatus = user.customStatuses[user.customStatuses.length - 1];
 
     res.status(201).json({
@@ -296,6 +310,9 @@ router.put('/custom/:statusId', auth, [
 
     await user.save();
 
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
+
     res.json({
       message: 'Custom status updated',
       status: {
@@ -334,6 +351,9 @@ router.delete('/custom/:statusId', auth, async (req, res) => {
 
     user.customStatuses.pull(statusId);
     await user.save();
+
+    // Invalidate cache
+    await CacheService.invalidateStatuses(req.user._id.toString());
 
     res.json({ message: 'Custom status deleted' });
   } catch (error) {

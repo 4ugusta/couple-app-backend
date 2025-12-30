@@ -7,6 +7,8 @@ const { auth } = require('../middleware/auth');
 const { checkFreeSlots, checkPremiumSlots } = require('../middleware/premium');
 const { sendToUser } = require('../config/socket');
 const { sendPushNotification } = require('../services/push');
+const { cacheNotifications } = require('../middleware/cache');
+const { CacheService } = require('../services/cache');
 
 const router = express.Router();
 
@@ -39,7 +41,7 @@ router.get('/templates', auth, async (req, res) => {
 });
 
 // Get user's notifications
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, cacheNotifications, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const notifications = await Notification.getUserNotifications(req.user._id, limit);
@@ -109,6 +111,9 @@ router.post('/send/predefined', auth, [
       message: template.message,
       templateId
     });
+
+    // Invalidate receiver's notification cache
+    await CacheService.invalidateNotifications(receiverId);
 
     // Send real-time notification
     sendToUser(receiverId, 'notification:new', {
@@ -199,6 +204,9 @@ router.post('/send/custom', auth, [
       message: customTemplate.message,
       templateId: customNotificationId.toString()
     });
+
+    // Invalidate receiver's notification cache
+    await CacheService.invalidateNotifications(receiverId);
 
     // Send real-time notification
     sendToUser(receiverId, 'notification:new', {
@@ -390,6 +398,9 @@ router.put('/read', auth, [
 
     await Notification.markAsRead(notificationIds, req.user._id);
 
+    // Invalidate cache
+    await CacheService.invalidateNotifications(req.user._id.toString());
+
     res.json({ message: 'Notifications marked as read' });
   } catch (error) {
     console.error('Mark as read error:', error);
@@ -404,6 +415,9 @@ router.put('/read-all', auth, async (req, res) => {
       { receiverId: req.user._id, isRead: false },
       { isRead: true }
     );
+
+    // Invalidate cache
+    await CacheService.invalidateNotifications(req.user._id.toString());
 
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {

@@ -7,6 +7,7 @@ const http = require('http');
 const connectDB = require('./config/database');
 const { initializeSocket } = require('./config/socket');
 const { initializeFirebase } = require('./services/push');
+const { setupGraphQL } = require('./graphql');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -29,6 +30,11 @@ initializeFirebase();
 
 // Connect to MongoDB
 connectDB();
+
+// Initialize GraphQL
+setupGraphQL(app).catch(err => {
+  console.error('Failed to setup GraphQL:', err);
+});
 
 // Middleware
 app.use(helmet());

@@ -5,11 +5,13 @@ const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const { sendToUser } = require('../config/socket');
 const { sendPushNotification } = require('../services/push');
+const { cacheConnections } = require('../middleware/cache');
+const { CacheService } = require('../services/cache');
 
 const router = express.Router();
 
-// Get all connections
-router.get('/', auth, async (req, res) => {
+// Get all connections (with caching)
+router.get('/', auth, cacheConnections, async (req, res) => {
   try {
     const connections = await Connection.find({
       $or: [
@@ -213,6 +215,9 @@ router.put('/:connectionId/accept', auth, async (req, res) => {
     connection.status = 'accepted';
     await connection.save();
 
+    // Invalidate cache for both users
+    await CacheService.invalidateConnectionPair(req.user._id.toString(), connection.userId.toString());
+
     // Get the requester
     const requester = await User.findById(connection.userId);
 
@@ -267,6 +272,9 @@ router.put('/:connectionId/reject', auth, async (req, res) => {
 
     connection.status = 'rejected';
     await connection.save();
+
+    // Invalidate cache for both users
+    await CacheService.invalidateConnectionPair(req.user._id.toString(), connection.userId.toString());
 
     res.json({ message: 'Connection rejected' });
   } catch (error) {
@@ -334,6 +342,12 @@ router.delete('/:connectionId', auth, async (req, res) => {
       return res.status(404).json({ error: 'Connection not found' });
     }
 
+    // Invalidate cache for both users
+    const otherUserIdForCache = connection.userId.toString() === req.user._id.toString()
+      ? connection.connectedUserId.toString()
+      : connection.userId.toString();
+    await CacheService.invalidateConnectionPair(req.user._id.toString(), otherUserIdForCache);
+
     // Notify other user
     const otherUserId = connection.userId.toString() === req.user._id.toString()
       ? connection.connectedUserId
@@ -369,6 +383,12 @@ router.put('/:connectionId/block', auth, async (req, res) => {
 
     connection.status = 'blocked';
     await connection.save();
+
+    // Invalidate cache for both users
+    const otherUserIdBlock = connection.userId.toString() === req.user._id.toString()
+      ? connection.connectedUserId.toString()
+      : connection.userId.toString();
+    await CacheService.invalidateConnectionPair(req.user._id.toString(), otherUserIdBlock);
 
     res.json({ message: 'User blocked' });
   } catch (error) {
