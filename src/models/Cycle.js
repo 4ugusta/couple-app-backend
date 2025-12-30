@@ -73,6 +73,24 @@ const cycleSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  lastPeriodEnd: {
+    type: Date,
+    default: null
+  },
+  expectedNextPeriod: {
+    startDate: {
+      type: Date,
+      default: null
+    },
+    endDate: {
+      type: Date,
+      default: null
+    },
+    isManuallySet: {
+      type: Boolean,
+      default: false
+    }
+  },
   isTracking: {
     type: Boolean,
     default: true
@@ -84,12 +102,48 @@ const cycleSchema = new mongoose.Schema({
 // Index for shareWith lookup (userId index already created by unique: true)
 cycleSchema.index({ shareWith: 1 });
 
-// Calculate predicted next period start date
-cycleSchema.methods.getPredictedNextPeriod = function() {
+// Get next period (manually set or calculated)
+cycleSchema.methods.getNextPeriod = function() {
+  // If manually set, return that
+  if (this.expectedNextPeriod && this.expectedNextPeriod.isManuallySet && this.expectedNextPeriod.startDate) {
+    return {
+      startDate: this.expectedNextPeriod.startDate,
+      endDate: this.expectedNextPeriod.endDate,
+      isManuallySet: true
+    };
+  }
+
+  // Otherwise calculate from last period
   if (!this.lastPeriodStart) return null;
-  const nextPeriod = new Date(this.lastPeriodStart);
-  nextPeriod.setDate(nextPeriod.getDate() + this.cycleLength);
-  return nextPeriod;
+
+  const predictedStart = new Date(this.lastPeriodStart);
+  predictedStart.setDate(predictedStart.getDate() + this.cycleLength);
+
+  const predictedEnd = new Date(predictedStart);
+  predictedEnd.setDate(predictedEnd.getDate() + this.periodLength - 1);
+
+  return {
+    startDate: predictedStart,
+    endDate: predictedEnd,
+    isManuallySet: false
+  };
+};
+
+// Legacy method for backwards compatibility
+cycleSchema.methods.getPredictedNextPeriod = function() {
+  const next = this.getNextPeriod();
+  return next ? next.startDate : null;
+};
+
+// Get last period details
+cycleSchema.methods.getLastPeriod = function() {
+  if (!this.lastPeriodStart) return null;
+
+  return {
+    startDate: this.lastPeriodStart,
+    endDate: this.lastPeriodEnd,
+    daysAgo: Math.floor((new Date() - this.lastPeriodStart) / (1000 * 60 * 60 * 24))
+  };
 };
 
 // Calculate current cycle day

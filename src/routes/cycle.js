@@ -29,18 +29,29 @@ router.get('/', auth, cacheCycle, async (req, res) => {
     }
 
     const currentPhase = cycle.getCurrentPhase();
-    const nextPeriod = cycle.getPredictedNextPeriod();
+    const lastPeriod = cycle.getLastPeriod();
+    const nextPeriod = cycle.getNextPeriod();
     const fertileWindow = cycle.getFertileWindow();
+
+    // Check if there's an ongoing period
+    const latestPeriod = cycle.periods[cycle.periods.length - 1];
+    const hasOngoingPeriod = latestPeriod && !latestPeriod.endDate;
 
     res.json({
       cycle: {
         id: cycle._id,
         cycleLength: cycle.cycleLength,
         periodLength: cycle.periodLength,
-        lastPeriodStart: cycle.lastPeriodStart,
         isTracking: cycle.isTracking,
         currentPhase,
+        lastPeriod,
         nextPeriod,
+        hasOngoingPeriod,
+        ongoingPeriod: hasOngoingPeriod ? {
+          startDate: latestPeriod.startDate,
+          flow: latestPeriod.flow,
+          dayCount: Math.ceil((new Date() - latestPeriod.startDate) / (1000 * 60 * 60 * 24)) + 1
+        } : null,
         fertileWindow,
         recentPeriods: cycle.periods.slice(-6).reverse(),
         shareWith: cycle.shareWith.map(u => ({
@@ -96,6 +107,16 @@ router.post('/period/start', auth, [
       }
     }
 
+    // Check if period came early (before expected)
+    let cameEarly = false;
+    if (cycle.expectedNextPeriod && cycle.expectedNextPeriod.isManuallySet && cycle.expectedNextPeriod.startDate) {
+      const expectedStart = new Date(cycle.expectedNextPeriod.startDate);
+      expectedStart.setHours(0, 0, 0, 0);
+      const actualStart = new Date(startDate);
+      actualStart.setHours(0, 0, 0, 0);
+      cameEarly = actualStart < expectedStart;
+    }
+
     // Add new period
     cycle.periods.push({
       startDate,
@@ -104,20 +125,29 @@ router.post('/period/start', auth, [
     });
 
     cycle.lastPeriodStart = startDate;
+
+    // Clear expected period since actual period has started
+    cycle.expectedNextPeriod = {
+      startDate: null,
+      endDate: null,
+      isManuallySet: false
+    };
+
     await cycle.save();
 
     // Invalidate cache
     await CacheService.invalidateCycle(req.user._id.toString());
 
     // Notify users who can see cycle
-    await notifyCycleUpdate(req.user._id, cycle, 'period_started');
+    await notifyCycleUpdate(req.user._id, cycle, cameEarly ? 'period_started_early' : 'period_started');
 
     const currentPhase = cycle.getCurrentPhase();
-    const nextPeriod = cycle.getPredictedNextPeriod();
+    const nextPeriod = cycle.getNextPeriod();
 
     res.json({
-      message: 'Period started',
+      message: cameEarly ? 'Period started (earlier than expected)' : 'Period started',
       period: cycle.periods[cycle.periods.length - 1],
+      cameEarly,
       currentPhase,
       nextPeriod
     });
@@ -153,6 +183,7 @@ router.post('/period/end', auth, [
     }
 
     lastPeriod.endDate = endDate;
+    cycle.lastPeriodEnd = endDate;
 
     // Update average period length
     if (periodDays >= 1 && periodDays <= 10) {
@@ -406,6 +437,114 @@ router.put('/settings', auth, [
   }
 });
 
+// Set expected upcoming period
+router.put('/expected', auth, [
+  body('startDate').isISO8601(),
+  body('endDate').optional().isISO8601()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const startDate = new Date(req.body.startDate);
+    const endDate = req.body.endDate ? new Date(req.body.endDate) : null;
+
+    // Validate dates
+    if (endDate && endDate < startDate) {
+      return res.status(400).json({ error: 'End date cannot be before start date' });
+    }
+
+    // Start date should be in the future (or at most today)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDateNormalized = new Date(startDate);
+    startDateNormalized.setHours(0, 0, 0, 0);
+
+    if (startDateNormalized < today) {
+      return res.status(400).json({ error: 'Expected period start date must be today or in the future' });
+    }
+
+    // Limit to 60 days in the future
+    const sixtyDaysAhead = new Date();
+    sixtyDaysAhead.setDate(sixtyDaysAhead.getDate() + 60);
+
+    if (startDate > sixtyDaysAhead) {
+      return res.status(400).json({ error: 'Expected period date must be within 60 days from today' });
+    }
+
+    let cycle = await Cycle.findOne({ userId: req.user._id });
+
+    if (!cycle) {
+      cycle = await Cycle.create({
+        userId: req.user._id,
+        cycleLength: 28,
+        periodLength: 5,
+        isTracking: true
+      });
+    }
+
+    cycle.expectedNextPeriod = {
+      startDate,
+      endDate,
+      isManuallySet: true
+    };
+
+    await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
+    // Notify users who can see cycle
+    await notifyCycleUpdate(req.user._id, cycle, 'expected_period_set');
+
+    res.json({
+      message: 'Expected period set',
+      expectedNextPeriod: {
+        startDate: cycle.expectedNextPeriod.startDate,
+        endDate: cycle.expectedNextPeriod.endDate,
+        isManuallySet: true
+      }
+    });
+  } catch (error) {
+    console.error('Set expected period error:', error);
+    res.status(500).json({ error: 'Failed to set expected period' });
+  }
+});
+
+// Clear expected period (revert to calculated)
+router.delete('/expected', auth, async (req, res) => {
+  try {
+    const cycle = await Cycle.findOne({ userId: req.user._id });
+
+    if (!cycle) {
+      return res.status(404).json({ error: 'Cycle data not found' });
+    }
+
+    cycle.expectedNextPeriod = {
+      startDate: null,
+      endDate: null,
+      isManuallySet: false
+    };
+
+    await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
+    const nextPeriod = cycle.getNextPeriod();
+
+    res.json({
+      message: 'Expected period cleared, using calculated prediction',
+      nextPeriod
+    });
+  } catch (error) {
+    console.error('Clear expected period error:', error);
+    res.status(500).json({ error: 'Failed to clear expected period' });
+  }
+});
+
 // Update sharing settings
 router.put('/sharing', auth, [
   body('shareWith').isArray()
@@ -546,12 +685,18 @@ async function notifyCycleUpdate(userId, cycle, type) {
     if (type === 'period_started') {
       title = `${user.name}'s Cycle Update`;
       message = `${user.name}'s period has started`;
+    } else if (type === 'period_started_early') {
+      title = `${user.name}'s Cycle Update`;
+      message = `${user.name}'s period started earlier than expected`;
     } else if (type === 'period_ended') {
       title = `${user.name}'s Cycle Update`;
       message = `${user.name}'s period has ended`;
     } else if (type === 'period_logged') {
       title = `${user.name}'s Cycle Update`;
       message = `${user.name} logged a past period`;
+    } else if (type === 'expected_period_set') {
+      title = `${user.name}'s Cycle Update`;
+      message = `${user.name} updated their expected period`;
     }
 
     for (const sharedUser of sharedUsers) {
