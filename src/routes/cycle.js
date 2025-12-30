@@ -191,8 +191,14 @@ router.post('/period/log', auth, [
       return res.status(400).json({ error: 'End date cannot be before start date' });
     }
 
-    if (startDate > new Date()) {
-      return res.status(400).json({ error: 'Cannot log future periods' });
+    // Allow dates up to 1 year in past and 1 year in future (for predictions/planning)
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const oneYearAhead = new Date();
+    oneYearAhead.setFullYear(oneYearAhead.getFullYear() + 1);
+
+    if (startDate < oneYearAgo || startDate > oneYearAhead) {
+      return res.status(400).json({ error: 'Date must be within 1 year of today' });
     }
 
     let cycle = await Cycle.findOne({ userId: req.user._id });
