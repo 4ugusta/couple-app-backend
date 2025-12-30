@@ -5,6 +5,8 @@ const User = require('../models/User');
 const Connection = require('../models/Connection');
 const { auth } = require('../middleware/auth');
 const { processLocationUpdate, updateLocationSharing } = require('../services/location');
+const { cacheLocationSharing } = require('../middleware/cache');
+const { CacheService } = require('../services/cache');
 
 const router = express.Router();
 
@@ -59,7 +61,7 @@ router.post('/update', auth, [
 });
 
 // Get location sharing settings
-router.get('/sharing', auth, async (req, res) => {
+router.get('/sharing', auth, cacheLocationSharing, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
       .populate('locationSharing.shareWith', 'name avatar');
@@ -113,6 +115,9 @@ router.put('/sharing', auth, [
         validShareWith
       );
 
+      // Invalidate cache
+      await CacheService.invalidateLocation(req.user._id.toString());
+
       const user = await User.findById(req.user._id)
         .populate('locationSharing.shareWith', 'name avatar');
 
@@ -128,6 +133,9 @@ router.put('/sharing', auth, [
     }
 
     await updateLocationSharing(req.user._id, enabled, []);
+
+    // Invalidate cache
+    await CacheService.invalidateLocation(req.user._id.toString());
 
     res.json({
       message: 'Location sharing updated',

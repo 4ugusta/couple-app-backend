@@ -7,11 +7,13 @@ const Notification = require('../models/Notification');
 const { auth } = require('../middleware/auth');
 const { sendToUser } = require('../config/socket');
 const { sendPushNotification } = require('../services/push');
+const { cacheCycle } = require('../middleware/cache');
+const { CacheService } = require('../services/cache');
 
 const router = express.Router();
 
 // Get or create cycle data
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, cacheCycle, async (req, res) => {
   try {
     let cycle = await Cycle.findOne({ userId: req.user._id })
       .populate('shareWith', 'name avatar');
@@ -104,6 +106,9 @@ router.post('/period/start', auth, [
     cycle.lastPeriodStart = startDate;
     await cycle.save();
 
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
     // Notify users who can see cycle
     await notifyCycleUpdate(req.user._id, cycle, 'period_started');
 
@@ -155,6 +160,9 @@ router.post('/period/end', auth, [
     }
 
     await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
 
     // Notify users who can see cycle
     await notifyCycleUpdate(req.user._id, cycle, 'period_ended');
@@ -261,6 +269,9 @@ router.post('/period/log', auth, [
 
     await cycle.save();
 
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
     // Notify users who can see cycle
     await notifyCycleUpdate(req.user._id, cycle, 'period_logged');
 
@@ -309,6 +320,9 @@ router.post('/symptom', auth, [
     });
 
     await cycle.save();
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
 
     res.json({
       message: 'Symptom logged',
@@ -375,6 +389,9 @@ router.put('/settings', auth, [
       await cycle.save();
     }
 
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
+
     res.json({
       message: 'Settings updated',
       settings: {
@@ -427,6 +444,9 @@ router.put('/sharing', auth, [
       cycle.shareWith = validShareWith;
       await cycle.save();
     }
+
+    // Invalidate cache
+    await CacheService.invalidateCycle(req.user._id.toString());
 
     const updatedCycle = await Cycle.findById(cycle._id)
       .populate('shareWith', 'name avatar');

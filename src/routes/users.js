@@ -2,11 +2,12 @@ const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
+const { cacheUserSearch, cacheUserById } = require('../middleware/cache');
 
 const router = express.Router();
 
 // Search users by phone number
-router.get('/search', auth, [
+router.get('/search', auth, cacheUserSearch, [
   query('phone').optional(),
   query('email').optional().isEmail()
 ], async (req, res) => {
@@ -57,7 +58,7 @@ router.get('/search', auth, [
 });
 
 // Get user profile by ID (for connected users only)
-router.get('/:userId', auth, async (req, res) => {
+router.get('/:userId', auth, cacheUserById, async (req, res) => {
   try {
     const { userId } = req.params;
 
