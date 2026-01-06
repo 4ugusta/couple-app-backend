@@ -9,6 +9,9 @@ const { initializeSocket } = require('./config/socket');
 const { initializeFirebase } = require('./services/push');
 const { setupGraphQL } = require('./graphql');
 
+// Import middleware
+const versionCheck = require('./middleware/versionCheck');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -55,6 +58,9 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Version check for all API routes (rejects old app versions)
+app.use('/api', versionCheck);
 
 // API Routes
 app.use('/api/auth', authRoutes);
